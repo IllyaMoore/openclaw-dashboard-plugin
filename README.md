@@ -46,11 +46,15 @@ openclaw-dashboard-plugin/
 
 ## References
 
-- Command Center source: `E:\code\Command-Center-personal`
-- OpenClaw monorepo: `E:\code\openclaw-src`
-- Plugin SDK: `openclaw-src/packages/plugin-sdk`
-- Reference plugin (HTTP route registration): `openclaw-src/extensions/webhooks`
-- Plugin docs: `openclaw-src/docs/plugins/building-plugins.md`
+This package lives in a workspace alongside two reference folders. From `plugin/` use sibling paths:
+
+- Command Center source we port from: `../nanoclaw-dashboard/` (copy of `E:\code\Command-Center-personal`)
+- OpenClaw monorepo (junction → `E:\code\openclaw-src`): `../openclaw/`
+- Plugin SDK: `../openclaw/packages/plugin-sdk/`
+- Reference plugin (HTTP route registration): `../openclaw/extensions/webhooks/`
+- Plugin docs: `../openclaw/docs/plugins/building-plugins.md`
+
+See top-level [`../README.md`](../README.md) for the workspace layout.
 
 ## License
 
