@@ -14,14 +14,15 @@
   "scripts": {
     "build": "tsc",
     "dev": "tsc --watch",
-    "clean": "rimraf dist",
+    "clean": "rimraf dist *.tgz",
+    "pack:tarball": "npm run clean && npm run build && npm pack",
     "test": "echo \"no tests yet\" && exit 0"
   },
   "engines": {
     "node": ">=20"
   },
   "peerDependencies": {
-    "openclaw": ">=2026.5.7"
+    "openclaw": ">=2026.4.25"
   },
   "peerDependenciesMeta": {
     "openclaw": {
@@ -41,10 +42,10 @@
     "install": {
       "npmSpec": "@openclaw/dashboard",
       "defaultChoice": "npm",
-      "minHostVersion": ">=2026.5.7"
+      "minHostVersion": ">=2026.4.25"
     },
     "compat": {
-      "pluginApi": ">=2026.5.7"
+      "pluginApi": ">=2026.4.25"
     },
     "build": {
       "openclawVersion": "2026.5.7"
