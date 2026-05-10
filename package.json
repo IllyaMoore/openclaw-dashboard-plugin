@@ -1,0 +1,58 @@
+{
+  "name": "@openclaw/dashboard",
+  "version": "0.1.0",
+  "description": "Command-Center dashboard repackaged as an OpenClaw plugin",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "files": [
+    "dist",
+    "openclaw.plugin.json",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "clean": "rimraf dist",
+    "test": "echo \"no tests yet\" && exit 0"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "peerDependencies": {
+    "openclaw": ">=2026.5.7"
+  },
+  "peerDependenciesMeta": {
+    "openclaw": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "openclaw": ">=2026.5.7",
+    "rimraf": "^6.0.0",
+    "typescript": "^5.6.0"
+  },
+  "openclaw": {
+    "extensions": [
+      "./dist/index.js"
+    ],
+    "install": {
+      "npmSpec": "@openclaw/dashboard",
+      "defaultChoice": "npm",
+      "minHostVersion": ">=2026.5.7"
+    },
+    "compat": {
+      "pluginApi": ">=2026.5.7"
+    },
+    "build": {
+      "openclawVersion": "2026.5.7"
+    }
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/IllyaMoore/openclaw-dashboard-plugin"
+  },
+  "license": "MIT"
+}

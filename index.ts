@@ -1,0 +1,17 @@
+import { definePluginEntry } from "openclaw/plugin-sdk/plugin-entry";
+import { handleHealth } from "./src/api/health.js";
+
+export default definePluginEntry({
+  id: "dashboard",
+  name: "OpenClaw Dashboard",
+  description: "Command-Center dashboard repackaged as an OpenClaw plugin",
+  register(api) {
+    api.registerHttpRoute({
+      path: "/api/dashboard/health",
+      auth: "gateway",
+      match: "exact",
+      gatewayRuntimeScopeSurface: "trusted-operator",
+      handler: handleHealth,
+    });
+  },
+});
