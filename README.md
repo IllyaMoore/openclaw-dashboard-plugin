@@ -4,9 +4,40 @@ OpenClaw extension that ports the [Command Center](https://github.com/IllyaMoore
 
 ## Status
 
-**Pre-alpha.** Discovery and design phase. No code yet.
+**Alpha — scaffold landed.** Plugin shell builds, packages, and registers a working
+`/api/dashboard/health` route on a real gateway. Endpoint ports are in flight.
 
 Tracked in Linear: [OpenClaw Plugin: Command Center Dashboard](https://linear.app/storypages/project/openclaw-plugin-command-center-dashboard-e2e1caac830a).
+
+## Local development
+
+```sh
+# install deps (Node >=20)
+npm install
+
+# build TypeScript -> dist/
+npm run build
+
+# bundle as installable tarball (clean + build + npm pack)
+npm run pack:tarball
+# -> openclaw-dashboard-0.1.0.tgz
+```
+
+Install the tarball into a running gateway (Node 22+ host):
+
+```sh
+openclaw plugins install ./openclaw-dashboard-0.1.0.tgz
+systemctl --user restart openclaw-gateway
+```
+
+Then verify:
+
+```sh
+TOKEN=$(grep OPENCLAW_GATEWAY_TOKEN ~/.openclaw/.env | cut -d= -f2)
+curl -H "Authorization: Bearer $TOKEN" \
+     http://127.0.0.1:18789/api/dashboard/health
+# -> {"status":"ok","plugin":"dashboard","version":"0.1.0","timestamp":"..."}
+```
 
 ## Goal
 
