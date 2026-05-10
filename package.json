@@ -14,7 +14,7 @@
   "scripts": {
     "build": "tsc",
     "dev": "tsc --watch",
-    "clean": "rimraf dist *.tgz",
+    "clean": "rimraf --glob dist \"openclaw-dashboard-*.tgz\"",
     "pack:tarball": "npm run clean && npm run build && npm pack",
     "test": "echo \"no tests yet\" && exit 0"
   },
