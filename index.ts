@@ -3,6 +3,8 @@ import { handleHealth } from "./src/api/health.js";
 import { handleAgents } from "./src/api/agents.js";
 import { createMessagesHandler } from "./src/api/messages.js";
 import { createTasksHandler } from "./src/api/tasks.js";
+import { createApprovalsHandler } from "./src/api/approvals.js";
+import { createToolPoliciesHandler } from "./src/api/tool-policies.js";
 
 export default definePluginEntry({
   id: "dashboard",
@@ -36,6 +38,20 @@ export default definePluginEntry({
       match: "prefix",
       gatewayRuntimeScopeSurface: "trusted-operator",
       handler: createTasksHandler(api.runtime, api.logger),
+    });
+    api.registerHttpRoute({
+      path: "/api/dashboard/approvals",
+      auth: "gateway",
+      match: "prefix",
+      gatewayRuntimeScopeSurface: "trusted-operator",
+      handler: createApprovalsHandler(api.runtime, api.logger),
+    });
+    api.registerHttpRoute({
+      path: "/api/dashboard/tool-policies",
+      auth: "gateway",
+      match: "prefix",
+      gatewayRuntimeScopeSurface: "trusted-operator",
+      handler: createToolPoliciesHandler(api.runtime, api.logger),
     });
   },
 });
