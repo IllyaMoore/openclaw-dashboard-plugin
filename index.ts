@@ -1,6 +1,7 @@
 import { definePluginEntry } from "openclaw/plugin-sdk/plugin-entry";
 import { handleHealth } from "./src/api/health.js";
 import { handleAgents } from "./src/api/agents.js";
+import { createMessagesHandler } from "./src/api/messages.js";
 
 export default definePluginEntry({
   id: "dashboard",
@@ -20,6 +21,13 @@ export default definePluginEntry({
       match: "prefix",
       gatewayRuntimeScopeSurface: "trusted-operator",
       handler: handleAgents,
+    });
+    api.registerHttpRoute({
+      path: "/api/dashboard/messages",
+      auth: "gateway",
+      match: "prefix",
+      gatewayRuntimeScopeSurface: "trusted-operator",
+      handler: createMessagesHandler(api.runtime, api.logger),
     });
   },
 });
