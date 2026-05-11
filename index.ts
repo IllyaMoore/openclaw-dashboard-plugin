@@ -6,6 +6,10 @@ import { createTasksHandler } from "./src/api/tasks.js";
 import { createApprovalsHandler } from "./src/api/approvals.js";
 import { createToolPoliciesHandler } from "./src/api/tool-policies.js";
 import { createEventsHandler } from "./src/api/events.js";
+import {
+  createUploadHandler,
+  createUploadsHandler,
+} from "./src/api/uploads.js";
 
 export default definePluginEntry({
   id: "dashboard",
@@ -60,6 +64,20 @@ export default definePluginEntry({
       match: "exact",
       gatewayRuntimeScopeSurface: "trusted-operator",
       handler: createEventsHandler(api.runtime, api.logger),
+    });
+    api.registerHttpRoute({
+      path: "/api/dashboard/upload",
+      auth: "gateway",
+      match: "exact",
+      gatewayRuntimeScopeSurface: "trusted-operator",
+      handler: createUploadHandler(api.runtime, api.logger),
+    });
+    api.registerHttpRoute({
+      path: "/api/dashboard/uploads",
+      auth: "gateway",
+      match: "prefix",
+      gatewayRuntimeScopeSurface: "trusted-operator",
+      handler: createUploadsHandler(api.runtime, api.logger),
     });
   },
 });
