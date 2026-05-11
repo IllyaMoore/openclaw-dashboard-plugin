@@ -1,0 +1,112 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <meta name="referrer" content="no-referrer" />
+  <title>OpenClaw Dashboard — wiring check</title>
+  <style>
+    :root { color-scheme: light dark; }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+      background: #f6f7f9;
+      color: #1d2330;
+      padding: 24px 32px;
+      line-height: 1.55;
+    }
+    @media (prefers-color-scheme: dark) {
+      body { background: #0e1219; color: #d8dde6; }
+      .card { background: #1a2030 !important; border-color: #232a3a !important; }
+      .ok { color: #5ee27a !important; }
+      .bad { color: #ff7676 !important; }
+      code { background: #232a3a !important; }
+    }
+    header { max-width: 760px; }
+    h1 { font-size: 22px; margin: 0 0 4px; letter-spacing: -0.01em; }
+    h1 small { font-weight: 400; color: #7a8294; }
+    p.lead { margin: 4px 0 24px; color: #555c6c; }
+    .card {
+      max-width: 760px;
+      background: #fff;
+      border: 1px solid #e5e8ee;
+      border-radius: 10px;
+      padding: 16px 20px;
+      margin-bottom: 16px;
+    }
+    .card h2 { font-size: 13px; text-transform: uppercase; letter-spacing: 0.08em; margin: 0 0 12px; color: #6a7283; }
+    table { width: 100%; border-collapse: collapse; font-size: 14px; }
+    td { padding: 6px 0; vertical-align: top; }
+    td.path { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; color: #455066; }
+    td.status { width: 90px; font-weight: 600; }
+    .ok { color: #1f8a3b; }
+    .bad { color: #c0392b; }
+    .pending { color: #7a8294; }
+    code { background: #eef0f4; padding: 2px 6px; border-radius: 4px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 13px; }
+    footer { max-width: 760px; margin-top: 24px; font-size: 12px; color: #7a8294; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>OpenClaw Dashboard <small>· wiring placeholder</small></h1>
+    <p class="lead">
+      This page is served by the <code>@openclaw/dashboard</code> plugin at
+      <code>/dashboard/</code>. The real Command-Center frontend bundle is
+      slated to land here in a follow-up to OPC-159. For now this page just
+      probes the plugin's API surface so you can verify the install is
+      healthy.
+    </p>
+  </header>
+
+  <section class="card">
+    <h2>API probe</h2>
+    <table id="probe">
+      <tbody></tbody>
+    </table>
+  </section>
+
+  <footer>
+    Plugin id <code>dashboard</code> · auth surface <code>trusted-operator</code>.
+    All requests below carry the gateway cookie / session that authorised this page.
+  </footer>
+
+  <script>
+    const ENDPOINTS = [
+      { method: "GET", path: "/api/dashboard/health" },
+      { method: "GET", path: "/api/dashboard/agents" },
+      { method: "GET", path: "/api/dashboard/tasks" },
+      { method: "GET", path: "/api/dashboard/approvals" },
+      { method: "GET", path: "/api/dashboard/tool-policies?folder=health-check" },
+      { method: "GET", path: "/api/dashboard/messages?folder=health-check" },
+    ];
+
+    const tbody = document.querySelector("#probe tbody");
+    const rows = ENDPOINTS.map((ep) => {
+      const tr = document.createElement("tr");
+      tr.innerHTML = `<td class="path">${ep.method} <code>${ep.path}</code></td><td class="status pending">probing…</td>`;
+      tbody.appendChild(tr);
+      return tr;
+    });
+
+    Promise.all(
+      ENDPOINTS.map((ep, i) =>
+        fetch(ep.path, { method: ep.method, credentials: "same-origin" })
+          .then((r) => {
+            const cell = rows[i].querySelector(".status");
+            cell.textContent = `${r.status} ${r.statusText || ""}`.trim();
+            cell.classList.remove("pending");
+            cell.classList.add(r.ok || r.status === 400 ? "ok" : "bad");
+          })
+          .catch((err) => {
+            const cell = rows[i].querySelector(".status");
+            cell.textContent = "network err";
+            cell.classList.remove("pending");
+            cell.classList.add("bad");
+            console.error(ep.path, err);
+          }),
+      ),
+    );
+  </script>
+</body>
+</html>
