@@ -7,6 +7,7 @@
   "types": "./dist/index.d.ts",
   "files": [
     "dist",
+    "ui",
     "openclaw.plugin.json",
     "README.md",
     "LICENSE"

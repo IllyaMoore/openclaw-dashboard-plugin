@@ -10,6 +10,7 @@ import {
   createUploadHandler,
   createUploadsHandler,
 } from "./src/api/uploads.js";
+import { createUiHandler } from "./src/api/ui.js";
 
 export default definePluginEntry({
   id: "dashboard",
@@ -78,6 +79,13 @@ export default definePluginEntry({
       match: "prefix",
       gatewayRuntimeScopeSurface: "trusted-operator",
       handler: createUploadsHandler(api.runtime, api.logger),
+    });
+    api.registerHttpRoute({
+      path: "/dashboard",
+      auth: "gateway",
+      match: "prefix",
+      gatewayRuntimeScopeSurface: "trusted-operator",
+      handler: createUiHandler({ rootDir: api.rootDir, logger: api.logger }),
     });
   },
 });
