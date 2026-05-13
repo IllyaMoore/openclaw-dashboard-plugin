@@ -81,10 +81,15 @@ export default definePluginEntry({
       handler: createUploadsHandler(api.runtime, api.logger),
     });
     api.registerHttpRoute({
+      // The bundled UI is plain static HTML/JS/CSS — no secrets, no live
+      // data. We mark it as `auth: "plugin"` so the gateway middleware does
+      // NOT 401 the initial page load (browsers can't send a Bearer header
+      // for a top-level navigation). Inside the page, every fetch to
+      // /api/dashboard/* still hits the gated routes above and must carry
+      // its own gateway credential — the data plane stays locked down.
       path: "/dashboard",
-      auth: "gateway",
+      auth: "plugin",
       match: "prefix",
-      gatewayRuntimeScopeSurface: "trusted-operator",
       handler: createUiHandler({ rootDir: api.rootDir, logger: api.logger }),
     });
   },
