@@ -1,6 +1,7 @@
 import { definePluginEntry } from "openclaw/plugin-sdk/plugin-entry";
 import { handleHealth } from "./src/api/health.js";
 import { handleAgents } from "./src/api/agents.js";
+import { handleModel } from "./src/api/model.js";
 import { createMessagesHandler } from "./src/api/messages.js";
 import { createTasksHandler } from "./src/api/tasks.js";
 import { createApprovalsHandler } from "./src/api/approvals.js";
@@ -11,6 +12,7 @@ import {
   createUploadsHandler,
 } from "./src/api/uploads.js";
 import { createUiHandler } from "./src/api/ui.js";
+import { handleCalendarEvents } from "./src/api/calendar.js";
 
 export default definePluginEntry({
   id: "dashboard",
@@ -60,11 +62,28 @@ export default definePluginEntry({
       handler: createToolPoliciesHandler(api.runtime, api.logger),
     });
     api.registerHttpRoute({
+      // SSE route is auth:"plugin" because EventSource cannot send a Bearer
+      // header. The handler itself validates the OPENCLAW_GATEWAY_TOKEN passed
+      // as a ?token=<token> query string (mirroring the openclaw control UI's
+      // hash-token approach but on the SSE-friendly side).
       path: "/api/dashboard/events",
+      auth: "plugin",
+      match: "exact",
+      handler: createEventsHandler(api.runtime, api.logger),
+    });
+    api.registerHttpRoute({
+      path: "/api/dashboard/model",
       auth: "gateway",
       match: "exact",
       gatewayRuntimeScopeSurface: "trusted-operator",
-      handler: createEventsHandler(api.runtime, api.logger),
+      handler: handleModel,
+    });
+    api.registerHttpRoute({
+      path: "/api/dashboard/calendar/events",
+      auth: "gateway",
+      match: "exact",
+      gatewayRuntimeScopeSurface: "trusted-operator",
+      handler: handleCalendarEvents,
     });
     api.registerHttpRoute({
       path: "/api/dashboard/upload",

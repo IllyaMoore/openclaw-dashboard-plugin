@@ -2,14 +2,24 @@ import type {
   OpenClawPluginHttpRouteHandler,
   OpenClawPluginApi,
 } from "openclaw/plugin-sdk/plugin-entry";
+import { callGateway } from "openclaw/plugin-sdk/testing";
 import { promises as fs } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { randomUUID } from "node:crypto";
 import type { IncomingMessage, ServerResponse } from "node:http";
 
 const AGENT_ID = "main";
 const SESSIONS_DIR = join(homedir(), ".openclaw", "agents", AGENT_ID, "sessions");
 const SESSIONS_INDEX = join(SESSIONS_DIR, "sessions.json");
+
+// All dashboard chat traffic is routed through OpenClaw's main session
+// (the same one Telegram / WhatsApp channels deliver to). The folder picker
+// in the sidebar selects which agent persona is in scope for prompt/settings
+// editing — for actual conversation, every dashboard tab shares the main chat.
+// Real per-folder isolation needs runtime.agent.runEmbeddedAgent and is
+// tracked as OPC-154-fu / OPC-152 follow-up.
+const CHAT_SESSION_KEY = "main";
 
 const FOLDER_RE = /^[a-z0-9][a-z0-9_-]{0,63}$/;
 
@@ -118,6 +128,25 @@ async function readSessionTranscript(
     const role = msg.role;
     if (role !== "user" && role !== "assistant" && role !== "system") continue;
 
+    // Heartbeat round-trips ("[OpenClaw heartbeat poll]" → "HEARTBEAT_OK") are
+    // internal keep-alive traffic injected by the runtime, not real chat. Drop
+    // them so the transcript shows only conversational turns.
+    const previewParts = Array.isArray(msg.content) ? msg.content : [];
+    const firstText = previewParts.find(
+      (p: unknown): p is { type: string; text: string } =>
+        !!p &&
+        typeof p === "object" &&
+        (p as { type?: unknown }).type === "text" &&
+        typeof (p as { text?: unknown }).text === "string",
+    );
+    const heartbeatText = firstText?.text?.trim() ?? "";
+    if (
+      heartbeatText === "[OpenClaw heartbeat poll]" ||
+      heartbeatText === "HEARTBEAT_OK"
+    ) {
+      continue;
+    }
+
     // OpenClaw stores `content` as an array of typed parts:
     //   [{type:"text", text:"..."}, {type:"toolCall", ...}, ...]
     // For chat-style transcripts we project only the text parts and join them.
@@ -138,6 +167,14 @@ async function readSessionTranscript(
     }
     if (!text) continue;
 
+    // The gateway prepends `[<weekday> <yyyy-mm-dd hh:mm UTC>] ` to every
+    // inbound user message so the agent sees turn boundaries. Strip it for
+    // display — both for readability and so the dashboard's 10s content-match
+    // dedup against optimistic updates actually fires.
+    if (role === "user") {
+      text = text.replace(/^\[[A-Za-z]{3} \d{4}-\d{2}-\d{2} \d{2}:\d{2} UTC\]\s*/, "");
+    }
+
     const timestamp =
       typeof event.timestamp === "string"
         ? event.timestamp
@@ -147,9 +184,13 @@ async function readSessionTranscript(
 
     messages.push({
       id: typeof event.id === "string" ? event.id : `${sessionId}-${messages.length}`,
-      chat_jid: scope,
+      // Prefix with `dashboard-` so ChatBubble's source-label fallback skips
+      // labelling these as "WhatsApp". The underlying main session is genuinely
+      // shared across channels and we can't recover the originating channel
+      // from JSONL alone — better to render no label than a wrong one.
+      chat_jid: `dashboard-${scope}`,
       sender: role,
-      sender_name: role === "user" ? "Dashboard" : role === "assistant" ? "Agent" : "System",
+      sender_name: role === "user" ? "You" : role === "assistant" ? "Agent" : "System",
       content: text,
       timestamp,
       is_from_me: role === "user",
@@ -157,6 +198,9 @@ async function readSessionTranscript(
     });
   }
 
+  // The dashboard UI expects newest-first (it reverses for display in
+  // use-messages.ts). Sort descending by timestamp and slice from the head.
+  messages.sort((a, b) => (a.timestamp < b.timestamp ? 1 : a.timestamp > b.timestamp ? -1 : 0));
   const total = messages.length;
   const sliced = messages.slice(offset, offset + limit);
   return { items: sliced, total };
@@ -197,7 +241,18 @@ export function createMessagesHandler(
         const offset = clampInt(url.searchParams.get("offset"), 0, 0, 1_000_000);
         const scope = scopeKey(folder);
 
-        const sessionId = await resolveSessionIdForScope(scope);
+        // Try the per-folder dashboard session first. If empty, fall back to
+        // the shared main session — that's where dashboard POSTs are routed
+        // and where the agent writes replies.
+        let sessionId = await resolveSessionIdForScope(scope);
+        let projectedScope = scope;
+        if (!sessionId) {
+          sessionId = await resolveSessionIdForScope(
+            `agent:${AGENT_ID}:${CHAT_SESSION_KEY}`,
+          );
+          projectedScope = scope; // keep the dashboard scope in the response shape
+        }
+
         if (!sessionId) {
           return sendJson(res, 200, {
             messages: [],
@@ -209,41 +264,110 @@ export function createMessagesHandler(
 
         const { items, total } = await readSessionTranscript(
           sessionId,
-          scope,
+          projectedScope,
           limit,
           offset,
         );
         return sendJson(res, 200, { messages: items, total, limit, offset });
       }
 
-      // POST /api/dashboard/messages — inject systemEvent into a session
+      // POST /api/dashboard/messages — inject a user message + wake the agent.
+      //
+      // Command-Center's POST shape allows either a structured systemEvent
+      // ({folder, type, payload}) or a chat-style user message
+      // ({text, group, ...}). We accept both. For chat, we project the user's
+      // text into the scope's systemEvent queue and request a heartbeat so the
+      // agent picks it up on its next turn.
       if (method === "POST" && segments.length === 3) {
         const body = await readJsonBody<{
           folder?: unknown;
+          group?: unknown;
+          text?: unknown;
           type?: unknown;
           payload?: unknown;
         }>(req);
 
-        const folder = typeof body.folder === "string" ? body.folder.trim() : "";
+        const folder =
+          typeof body.folder === "string"
+            ? body.folder.trim()
+            : typeof body.group === "string"
+              ? body.group.trim()
+              : "";
         if (!FOLDER_RE.test(folder)) {
           return sendJson(res, 400, { error: "invalid or missing folder" });
         }
 
+        const text =
+          typeof body.text === "string"
+            ? body.text.trim()
+            : typeof body.payload === "string"
+              ? body.payload.trim()
+              : typeof body.payload === "object" &&
+                  body.payload !== null &&
+                  typeof (body.payload as { text?: unknown }).text === "string"
+                ? (body.payload as { text: string }).text.trim()
+                : "";
+
+        if (!text) {
+          return sendJson(res, 400, { error: "missing text or payload.text" });
+        }
+
         const scope = scopeKey(folder);
 
-        // TODO(OPC-154-fu): wire api.runtime.system.enqueueSystemEvent so the
-        // injected event actually lands in the agent's next turn. For now we
-        // log it and tell the caller it was accepted; the dashboard can build
-        // against this surface today and the real enqueue lands in a follow-up.
-        logger.info?.(
-          `[dashboard] systemEvent inject (stub): scope=${scope} type=${String(body.type ?? "")}`,
-        );
-        void runtime; // mark used so tooling does not complain
+        // Route through the gateway's chat.send RPC — same path the openclaw
+        // built-in control UI takes. The gateway loads the session, picks an
+        // agent (defaults to "main"), and dispatches the message asynchronously
+        // to runEmbeddedAgent. The agent's reply lands in the main session
+        // JSONL where the dashboard's GET handler picks it up on the next
+        // poll.
+        const idempotencyKey = randomUUID();
+        const gatewayToken = process.env.OPENCLAW_GATEWAY_TOKEN ?? "";
+        if (!gatewayToken) {
+          return sendJson(res, 500, {
+            error: "gateway token not configured",
+          });
+        }
 
-        return sendJson(res, 202, {
-          accepted: true,
+        let ack: { runId?: string; status?: string };
+        try {
+          ack = await callGateway<{ runId: string; status: string }>({
+            url: "ws://127.0.0.1:18789",
+            token: gatewayToken,
+            method: "chat.send",
+            params: {
+              sessionKey: CHAT_SESSION_KEY,
+              message: text,
+              idempotencyKey,
+              deliver: false,
+            },
+            timeoutMs: 10_000,
+            clientName: "gateway-client",
+          });
+        } catch (err) {
+          logger.warn?.(
+            `[dashboard] chat.send failed for folder=${folder}: ${String(err)}`,
+          );
+          return sendJson(res, 502, {
+            error: "gateway chat.send failed",
+            detail: err instanceof Error ? err.message : String(err),
+          });
+        }
+
+        logger.info?.(
+          `[dashboard] chat.send accepted: folder=${folder} runId=${ack?.runId ?? "?"} chars=${text.length}`,
+        );
+
+        // Echo the assistant scope back so the front end can correlate, but
+        // the *real* transcript lives under CHAT_SESSION_KEY ("main"). GET
+        // /api/dashboard/messages reads from there.
+        return sendJson(res, 200, {
+          ok: true,
+          success: true,
           scope,
-          stubbed: true,
+          group: folder,
+          jid: scope,
+          runId: ack?.runId,
+          chatSessionKey: CHAT_SESSION_KEY,
         });
       }
 
