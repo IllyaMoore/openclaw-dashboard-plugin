@@ -5,13 +5,13 @@ import type {
 import { promises as fs } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { spawn } from "node:child_process";
 import type { IncomingMessage, ServerResponse } from "node:http";
 
 const AGENT_ID = "main";
-const SCOPE_PREFIX = `agent:${AGENT_ID}:dashboard:`;
+const MAIN_FOLDER = "main";
 const CRON_JOBS_FILE = join(homedir(), ".openclaw", "cron", "jobs.json");
-
-const FOLDER_RE = /^[a-z0-9][a-z0-9_-]{0,63}$/;
+const OPENCLAW_BIN = process.env.OPENCLAW_BIN ?? "openclaw";
 
 // Command-Center compatible shape
 type ScheduledTask = {
@@ -39,7 +39,7 @@ type TaskRunLog = {
   error: string | null;
 };
 
-// OpenClaw cron job shape (subset we need)
+// OpenClaw cron job shape (subset we need). Real schedule.kind is "cron" | "every" | "at".
 type OpenClawCronJob = {
   id: string;
   agentId?: string;
@@ -48,10 +48,11 @@ type OpenClawCronJob = {
   enabled?: boolean;
   createdAtMs?: number;
   schedule?: {
-    kind?: "cron" | "interval" | "once";
+    kind?: "cron" | "every" | "at";
     expr?: string;
-    intervalMs?: number;
-    when?: string;
+    everyMs?: number;
+    anchorMs?: number;
+    at?: string;
     tz?: string;
   };
   sessionTarget?: "isolated" | "main";
@@ -67,11 +68,6 @@ type OpenClawCronJob = {
     lastResult?: string;
   };
 };
-
-function folderFromScopeKey(scopeKey: string): string | null {
-  if (!scopeKey.startsWith(SCOPE_PREFIX)) return null;
-  return scopeKey.slice(SCOPE_PREFIX.length);
-}
 
 function sendJson(res: ServerResponse, status: number, body: unknown): boolean {
   const payload = JSON.stringify(body);
@@ -99,21 +95,31 @@ function msToIso(ms: number | undefined): string | null {
 }
 
 function mapJobToTask(job: OpenClawCronJob): ScheduledTask {
-  const folder = folderFromScopeKey(job.sessionKey ?? "") ?? "";
-  const scheduleKind = job.schedule?.kind ?? "cron";
-  const scheduleValue =
-    scheduleKind === "cron"
-      ? (job.schedule?.expr ?? "")
-      : scheduleKind === "interval"
-        ? String(job.schedule?.intervalMs ?? 0)
-        : (job.schedule?.when ?? "");
+  const sessionKey = job.sessionKey ?? "";
+  // After refactor: every cron belongs to the singular OpenClaw agent (`main`).
+  // Folder-personas are removed; the field is kept for UI bundle compatibility.
+  const folder = MAIN_FOLDER;
+
+  let scheduleType: "cron" | "interval" | "once" = "cron";
+  let scheduleValue = "";
+  const kind = job.schedule?.kind;
+  if (kind === "cron") {
+    scheduleType = "cron";
+    scheduleValue = job.schedule?.expr ?? "";
+  } else if (kind === "every") {
+    scheduleType = "interval";
+    scheduleValue = String(job.schedule?.everyMs ?? 0);
+  } else if (kind === "at") {
+    scheduleType = "once";
+    scheduleValue = job.schedule?.at ?? "";
+  }
 
   return {
     id: job.id,
     group_folder: folder,
-    chat_jid: job.sessionKey ?? "",
+    chat_jid: sessionKey,
     prompt: job.payload?.message ?? "",
-    schedule_type: scheduleKind,
+    schedule_type: scheduleType,
     schedule_value: scheduleValue,
     context_mode: job.sessionTarget === "main" ? "group" : "isolated",
     model: job.payload?.model ?? null,
@@ -149,20 +155,79 @@ async function readJobsFile(): Promise<OpenClawCronJob[]> {
 
 async function listTasks(folder: string | null): Promise<ScheduledTask[]> {
   const jobs = await readJobsFile();
-  return jobs
-    .filter((j) => {
-      const key = j.sessionKey ?? "";
-      if (!key.startsWith(SCOPE_PREFIX)) return false;
-      if (!folder) return true;
-      return folderFromScopeKey(key) === folder;
-    })
-    .map(mapJobToTask);
+  // After refactor: a single agent (`main`). Any folder other than `main` is
+  // historical and matches nothing. Empty folder filter returns everything.
+  if (folder && folder !== MAIN_FOLDER) {
+    return [];
+  }
+  return jobs.map(mapJobToTask);
 }
 
 async function getTaskById(taskId: string): Promise<ScheduledTask | null> {
   const jobs = await readJobsFile();
-  const job = jobs.find((j) => j.id === taskId && (j.sessionKey ?? "").startsWith(SCOPE_PREFIX));
+  const job = jobs.find((j) => j.id === taskId);
   return job ? mapJobToTask(job) : null;
+}
+
+async function runOpenclawCron(
+  args: string[],
+): Promise<{ ok: boolean; stdout: string; stderr: string; exitCode: number }> {
+  return new Promise((resolve) => {
+    const proc = spawn(OPENCLAW_BIN, ["cron", ...args], {
+      stdio: ["ignore", "pipe", "pipe"],
+      env: process.env,
+    });
+    let stdout = "";
+    let stderr = "";
+    proc.stdout.on("data", (c: Buffer) => {
+      stdout += c.toString();
+    });
+    proc.stderr.on("data", (c: Buffer) => {
+      stderr += c.toString();
+    });
+    proc.on("close", (code) => {
+      resolve({ ok: code === 0, stdout, stderr, exitCode: code ?? -1 });
+    });
+    proc.on("error", (err) => {
+      resolve({
+        ok: false,
+        stdout,
+        stderr: stderr + (err.message ?? "spawn error"),
+        exitCode: -1,
+      });
+    });
+  });
+}
+
+function parseJsonFromOutput<T = unknown>(stdout: string): T | null {
+  const start = stdout.search(/[{[]/);
+  if (start < 0) return null;
+  try {
+    return JSON.parse(stdout.slice(start)) as T;
+  } catch {
+    return null;
+  }
+}
+
+function pushScheduleArgs(args: string[], body: Record<string, unknown>): boolean {
+  const kind = body.schedule_type;
+  const value = body.schedule_value;
+  if (kind === "cron" && typeof value === "string" && value.trim()) {
+    args.push("--cron", value.trim());
+    if (typeof body.schedule_tz === "string" && body.schedule_tz.trim()) {
+      args.push("--tz", body.schedule_tz.trim());
+    }
+    return true;
+  }
+  if (kind === "interval" && (typeof value === "string" || typeof value === "number")) {
+    args.push("--every", String(value));
+    return true;
+  }
+  if (kind === "once" && typeof value === "string" && value.trim()) {
+    args.push("--at", value.trim());
+    return true;
+  }
+  return false;
 }
 
 // Read recent runs for a task via runtime.tasks.runs.bindSession(scope).list()
@@ -223,9 +288,6 @@ export function createTasksHandler(
       // GET /api/dashboard/tasks?folder=X&runs=N
       if (method === "GET" && !taskId) {
         const folder = url.searchParams.get("folder")?.trim() ?? null;
-        if (folder && !FOLDER_RE.test(folder)) {
-          return sendJson(res, 400, { error: "invalid folder name" });
-        }
         const runs = clampInt(url.searchParams.get("runs"), 5, 0, 50);
 
         const tasks = await listTasks(folder);
@@ -249,36 +311,169 @@ export function createTasksHandler(
       // POST /api/dashboard/tasks — create
       if (method === "POST" && !taskId) {
         const body = await readJsonBody<Record<string, unknown>>(req);
-        // TODO(OPC-155-fu): wire actual cron-job creation. Today the cron
-        // CRUD path lives behind a gateway RPC / CLI surface that this plugin
-        // does not yet talk to; we accept the request and return a stub so
-        // the dashboard can build against the contract.
-        logger.info?.(
-          `[dashboard] tasks.create (stub): folder=${String(body.group_folder ?? "")}`,
-        );
-        return sendJson(res, 202, { accepted: true, stubbed: true });
+        const args: string[] = ["add"];
+
+        if (typeof body.name === "string" && body.name.trim()) {
+          args.push("--name", body.name.trim());
+        }
+        if (typeof body.description === "string" && body.description.trim()) {
+          args.push("--description", body.description.trim());
+        }
+        if (!pushScheduleArgs(args, body)) {
+          return sendJson(res, 400, {
+            error: "schedule_type and schedule_value are required (cron|interval|once)",
+          });
+        }
+        if (body.context_mode === "group") {
+          args.push("--session", "main");
+        } else {
+          args.push("--session", "isolated");
+        }
+        if (typeof body.prompt === "string" && body.prompt.trim()) {
+          args.push("--message", body.prompt);
+        } else {
+          return sendJson(res, 400, { error: "prompt is required" });
+        }
+        // group_folder is intentionally ignored — folder-personas are deprecated.
+        // Crons belong to the singular OpenClaw agent (`main`).
+        if (typeof body.model === "string" && body.model.trim()) {
+          args.push("--model", body.model.trim());
+        }
+        if (typeof body.timeout_seconds === "number" && body.timeout_seconds > 0) {
+          args.push("--timeout-seconds", String(Math.floor(body.timeout_seconds)));
+        }
+        if (body.light_context !== false) args.push("--light-context");
+        if (body.deliver === true) {
+          args.push("--announce");
+          if (typeof body.deliver_channel === "string") {
+            args.push("--channel", body.deliver_channel);
+          }
+          if (typeof body.deliver_to === "string") {
+            args.push("--to", body.deliver_to);
+          }
+        } else {
+          args.push("--no-deliver");
+        }
+        args.push("--json");
+
+        logger.info?.(`[dashboard] tasks.create: name=${String(body.name ?? "")}`);
+        const r = await runOpenclawCron(args);
+        if (!r.ok) {
+          return sendJson(res, 502, {
+            error: "cron add failed",
+            stderr: r.stderr.trim(),
+            exitCode: r.exitCode,
+          });
+        }
+        const job = parseJsonFromOutput<OpenClawCronJob>(r.stdout);
+        if (!job?.id) {
+          return sendJson(res, 502, {
+            error: "cron add returned no job",
+            stdout: r.stdout.slice(0, 500),
+          });
+        }
+        return sendJson(res, 201, mapJobToTask(job));
       }
 
       // POST /api/dashboard/tasks/:id/run — trigger now
       if (method === "POST" && taskId && subResource === "run") {
-        // TODO(OPC-155-fu): real run-now requires a cron-runner RPC.
-        logger.info?.(`[dashboard] tasks.runNow (stub): id=${taskId}`);
-        return sendJson(res, 202, { accepted: true, task_id: taskId, stubbed: true });
+        logger.info?.(`[dashboard] tasks.runNow: id=${taskId}`);
+        const r = await runOpenclawCron(["run", taskId, "--json"]);
+        if (!r.ok) {
+          return sendJson(res, 502, {
+            error: "cron run failed",
+            stderr: r.stderr.trim(),
+            exitCode: r.exitCode,
+          });
+        }
+        const out = parseJsonFromOutput<{ runId?: string; enqueued?: boolean }>(r.stdout);
+        return sendJson(res, 202, {
+          accepted: true,
+          task_id: taskId,
+          run_id: out?.runId ?? null,
+          enqueued: out?.enqueued ?? true,
+        });
       }
 
       // PATCH /api/dashboard/tasks/:id — partial update
       if (method === "PATCH" && taskId && !subResource) {
         const body = await readJsonBody<Record<string, unknown>>(req);
-        // TODO(OPC-155-fu): wire cron-job patch via gateway/cron RPC.
-        logger.info?.(`[dashboard] tasks.patch (stub): id=${taskId} keys=${Object.keys(body)}`);
-        return sendJson(res, 202, { accepted: true, task_id: taskId, stubbed: true });
+        logger.info?.(
+          `[dashboard] tasks.patch: id=${taskId} keys=${Object.keys(body).join(",")}`,
+        );
+
+        // Status changes go through enable/disable sub-commands.
+        if (body.status === "active" || body.status === "paused") {
+          const sub = body.status === "active" ? "enable" : "disable";
+          const r = await runOpenclawCron([sub, taskId, "--json"]);
+          if (!r.ok) {
+            return sendJson(res, 502, {
+              error: `cron ${sub} failed`,
+              stderr: r.stderr.trim(),
+              exitCode: r.exitCode,
+            });
+          }
+        }
+
+        // Field edits via `cron edit`. Skip if only status changed.
+        const fieldKeys = Object.keys(body).filter((k) => k !== "status");
+        if (fieldKeys.length > 0) {
+          const args: string[] = ["edit", taskId];
+          if (typeof body.name === "string" && body.name.trim()) {
+            args.push("--name", body.name.trim());
+          }
+          if (typeof body.description === "string") {
+            args.push("--description", body.description);
+          }
+          if (body.schedule_type !== undefined) {
+            pushScheduleArgs(args, body);
+          }
+          if (typeof body.prompt === "string" && body.prompt.trim()) {
+            args.push("--message", body.prompt);
+          }
+          if (body.context_mode === "group") {
+            args.push("--session", "main");
+          } else if (body.context_mode === "isolated") {
+            args.push("--session", "isolated");
+          }
+          if (typeof body.model === "string" && body.model.trim()) {
+            args.push("--model", body.model.trim());
+          }
+          if (typeof body.timeout_seconds === "number" && body.timeout_seconds > 0) {
+            args.push("--timeout-seconds", String(Math.floor(body.timeout_seconds)));
+          }
+          args.push("--json");
+
+          // edit subcommand only when there are actual flags beyond [edit, id, --json]
+          if (args.length > 3) {
+            const r = await runOpenclawCron(args);
+            if (!r.ok) {
+              return sendJson(res, 502, {
+                error: "cron edit failed",
+                stderr: r.stderr.trim(),
+                exitCode: r.exitCode,
+              });
+            }
+          }
+        }
+
+        const updated = await getTaskById(taskId);
+        if (!updated) return sendJson(res, 404, { error: `task ${taskId} not found after patch` });
+        return sendJson(res, 200, updated);
       }
 
       // DELETE /api/dashboard/tasks/:id
       if (method === "DELETE" && taskId && !subResource) {
-        // TODO(OPC-155-fu): wire cron-job delete via gateway/cron RPC.
-        logger.info?.(`[dashboard] tasks.delete (stub): id=${taskId}`);
-        return sendJson(res, 202, { accepted: true, task_id: taskId, stubbed: true });
+        logger.info?.(`[dashboard] tasks.delete: id=${taskId}`);
+        const r = await runOpenclawCron(["rm", taskId, "--json"]);
+        if (!r.ok) {
+          return sendJson(res, 502, {
+            error: "cron rm failed",
+            stderr: r.stderr.trim(),
+            exitCode: r.exitCode,
+          });
+        }
+        return sendJson(res, 200, { ok: true, id: taskId });
       }
 
       return sendJson(res, 405, { error: `method ${method} not allowed` });

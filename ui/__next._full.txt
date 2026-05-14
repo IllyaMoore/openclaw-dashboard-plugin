@@ -1,0 +1,87 @@
+1:"$Sreact.fragment"
+3:I[33889,["/dashboard/_next/static/chunks/0aehu8bsha_ej.js","/dashboard/_next/static/chunks/11bvgb~txe2m8.js"],"ThemeProvider"]
+4:I[85565,["/dashboard/_next/static/chunks/0aehu8bsha_ej.js","/dashboard/_next/static/chunks/11bvgb~txe2m8.js"],"default"]
+5:I[22853,["/dashboard/_next/static/chunks/0aehu8bsha_ej.js","/dashboard/_next/static/chunks/11bvgb~txe2m8.js"],"default"]
+9:I[83612,["/dashboard/_next/static/chunks/0aehu8bsha_ej.js","/dashboard/_next/static/chunks/11bvgb~txe2m8.js"],"default",1]
+:HL["/dashboard/_next/static/chunks/0s4j.7kknpl0k.css","style"]
+:HL["/dashboard/_next/static/media/2a65768255d6b625-s.p.14by5b4al-y~f.woff2","font",{"crossOrigin":"","type":"font/woff2"}]
+:HL["/dashboard/_next/static/media/70bc3e132a0a741e-s.p.1409xf.ylxg8g.woff2","font",{"crossOrigin":"","type":"font/woff2"}]
+:HL["/dashboard/_next/static/media/83afe278b6a6bb3c-s.p.0q-301v4kxxnr.woff2","font",{"crossOrigin":"","type":"font/woff2"}]
+:HL["/dashboard/_next/static/media/8c2eb9ceedecfc8e-s.p.0oeo8epbafgia.woff2","font",{"crossOrigin":"","type":"font/woff2"}]
+2:T8ef,
+(function () {
+  var STORAGE_KEY = "openclaw:dashboard:token";
+  try {
+    var hash = window.location.hash || "";
+    if (hash.charAt(0) === "#") hash = hash.slice(1);
+    if (hash) {
+      var params = new URLSearchParams(hash);
+      var fromUrl = params.get("token");
+      if (fromUrl) {
+        try { localStorage.setItem(STORAGE_KEY, fromUrl); } catch (e) {}
+        params.delete("token");
+        var rest = params.toString();
+        var newHash = rest ? "#" + rest : "";
+        history.replaceState(null, "", window.location.pathname + window.location.search + newHash);
+      }
+    }
+  } catch (e) {}
+
+  function readToken() {
+    try { return localStorage.getItem(STORAGE_KEY) || ""; } catch (e) { return ""; }
+  }
+
+  var originalFetch = window.fetch;
+  window.fetch = function (input, init) {
+    var token = readToken();
+    if (!token) return originalFetch(input, init);
+    var url = typeof input === "string"
+      ? input
+      : (input && input.url) ? input.url : "";
+    var isApi = url.indexOf("/api/dashboard/") === 0
+      || url.indexOf(window.location.origin + "/api/dashboard/") === 0;
+    if (!isApi) return originalFetch(input, init);
+    var nextInit = Object.assign({}, init || {});
+    var headers = new Headers((init && init.headers) || (typeof input !== "string" && input.headers) || {});
+    if (!headers.has("Authorization")) headers.set("Authorization", "Bearer " + token);
+    nextInit.headers = headers;
+    return originalFetch(input, nextInit);
+  };
+
+  // EventSource cannot send custom headers, so we smuggle the token via
+  // ?token=<token> query string. The plugin's events handler validates this
+  // against OPENCLAW_GATEWAY_TOKEN at the server side.
+  var OE = window.EventSource;
+  if (OE) {
+    function PatchedEventSource(url, options) {
+      var token = readToken();
+      if (token && typeof url === "string" && url.indexOf("/api/dashboard/") !== -1) {
+        var sep = url.indexOf("?") === -1 ? "?" : "&";
+        url = url + sep + "token=" + encodeURIComponent(token);
+      }
+      return new OE(url, options);
+    }
+    PatchedEventSource.prototype = OE.prototype;
+    PatchedEventSource.CONNECTING = 0;
+    PatchedEventSource.OPEN = 1;
+    PatchedEventSource.CLOSED = 2;
+    window.EventSource = PatchedEventSource;
+  }
+})();
+0:{"P":null,"c":["",""],"q":"","i":false,"f":[[["",{"children":["__PAGE__",{}]},"$undefined","$undefined",16],[["$","$1","c",{"children":[[["$","link","0",{"rel":"stylesheet","href":"/dashboard/_next/static/chunks/0s4j.7kknpl0k.css","precedence":"next","crossOrigin":"$undefined","nonce":"$undefined"}],["$","script","script-0",{"src":"/dashboard/_next/static/chunks/0aehu8bsha_ej.js","async":true,"nonce":"$undefined"}],["$","script","script-1",{"src":"/dashboard/_next/static/chunks/11bvgb~txe2m8.js","async":true,"nonce":"$undefined"}]],["$","html",null,{"lang":"en","className":"playfair_display_201c7589-module__bqF_1q__variable lora_b806e6b1-module__oIPTsq__variable inter_7b064e0d-module__MOT0tq__variable jetbrains_mono_84d6efd-module__5Hl15a__variable h-full","suppressHydrationWarning":true,"children":[["$","head",null,{"children":["$","script",null,{"dangerouslySetInnerHTML":{"__html":"$2"}}]}],["$","body",null,{"className":"h-full font-sans antialiased","children":["$","$L3",null,{"children":["$","$L4",null,{"parallelRouterKey":"children","error":"$undefined","errorStyles":"$undefined","errorScripts":"$undefined","template":["$","$L5",null,{}],"templateStyles":"$undefined","templateScripts":"$undefined","notFound":[[["$","title",null,{"children":"404: This page could not be found."}],["$","div",null,{"style":{"fontFamily":"system-ui,\"Segoe UI\",Roboto,Helvetica,Arial,sans-serif,\"Apple Color Emoji\",\"Segoe UI Emoji\"","height":"100vh","textAlign":"center","display":"flex","flexDirection":"column","alignItems":"center","justifyContent":"center"},"children":"$L6"}]],[]],"forbidden":"$undefined","unauthorized":"$undefined"}]}]}]]}]]}],{"children":["$L7",{},null,false,null]},null,false,null],"$L8",false]],"m":"$undefined","G":["$9",["$La"]],"S":true,"h":null,"s":"$undefined","l":"$undefined","p":"$undefined","d":"$undefined","b":"HhiFDK2By8WGsCaSeC2Ne"}
+b:I[52444,["/dashboard/_next/static/chunks/0aehu8bsha_ej.js","/dashboard/_next/static/chunks/11bvgb~txe2m8.js"],"ClientPageRoot"]
+c:I[26743,["/dashboard/_next/static/chunks/0aehu8bsha_ej.js","/dashboard/_next/static/chunks/11bvgb~txe2m8.js","/dashboard/_next/static/chunks/10uabdefj243b.js"],"default"]
+f:I[72084,["/dashboard/_next/static/chunks/0aehu8bsha_ej.js","/dashboard/_next/static/chunks/11bvgb~txe2m8.js"],"OutletBoundary"]
+10:"$Sreact.suspense"
+12:I[72084,["/dashboard/_next/static/chunks/0aehu8bsha_ej.js","/dashboard/_next/static/chunks/11bvgb~txe2m8.js"],"ViewportBoundary"]
+14:I[72084,["/dashboard/_next/static/chunks/0aehu8bsha_ej.js","/dashboard/_next/static/chunks/11bvgb~txe2m8.js"],"MetadataBoundary"]
+6:["$","div",null,{"children":[["$","style",null,{"dangerouslySetInnerHTML":{"__html":"body{color:#000;background:#fff;margin:0}.next-error-h1{border-right:1px solid rgba(0,0,0,.3)}@media (prefers-color-scheme:dark){body{color:#fff;background:#000}.next-error-h1{border-right:1px solid rgba(255,255,255,.3)}}"}}],["$","h1",null,{"className":"next-error-h1","style":{"display":"inline-block","margin":"0 20px 0 0","padding":"0 23px 0 0","fontSize":24,"fontWeight":500,"verticalAlign":"top","lineHeight":"49px"},"children":404}],["$","div",null,{"style":{"display":"inline-block"},"children":["$","h2",null,{"style":{"fontSize":14,"fontWeight":400,"lineHeight":"49px","margin":0},"children":"This page could not be found."}]}]]}]
+7:["$","$1","c",{"children":[["$","$Lb",null,{"Component":"$c","serverProvidedParams":{"searchParams":{},"params":{},"promises":["$@d","$@e"]}}],[["$","script","script-0",{"src":"/dashboard/_next/static/chunks/10uabdefj243b.js","async":true,"nonce":"$undefined"}]],["$","$Lf",null,{"children":["$","$10",null,{"name":"Next.MetadataOutlet","children":"$@11"}]}]]}]
+8:["$","$1","h",{"children":[null,["$","$L12",null,{"children":"$L13"}],["$","div",null,{"hidden":true,"children":["$","$L14",null,{"children":["$","$10",null,{"name":"Next.Metadata","children":"$L15"}]}]}],["$","meta",null,{"name":"next-size-adjust","content":""}]]}]
+a:["$","link","0",{"rel":"stylesheet","href":"/dashboard/_next/static/chunks/0s4j.7kknpl0k.css","precedence":"next","crossOrigin":"$undefined","nonce":"$undefined"}]
+d:{}
+e:"$7:props:children:0:props:serverProvidedParams:params"
+13:[["$","meta","0",{"charSet":"utf-8"}],["$","meta","1",{"name":"viewport","content":"width=device-width, initial-scale=1, viewport-fit=cover"}]]
+16:I[59233,["/dashboard/_next/static/chunks/0aehu8bsha_ej.js","/dashboard/_next/static/chunks/11bvgb~txe2m8.js"],"IconMark"]
+11:null
+15:[["$","title","0",{"children":"NanoClaw Studio"}],["$","meta","1",{"name":"description","content":"AI Agent Control Panel"}],["$","link","2",{"rel":"icon","href":"/dashboard/favicon.ico?favicon.0x3dzn~oxb6tn.ico","sizes":"256x256","type":"image/x-icon"}],["$","$L16","3",{}]]
