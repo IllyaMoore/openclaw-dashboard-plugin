@@ -7,6 +7,7 @@ import type { ServerResponse } from "node:http";
 const AGENT_ID = "main";
 const WORKSPACE_DIR = join(homedir(), ".openclaw", "workspace");
 const IDENTITY_FILE = join(WORKSPACE_DIR, "IDENTITY.md");
+const MEMORY_FILE = join(WORKSPACE_DIR, "MEMORY.md");
 
 const MAIN_FOLDER = "main";
 const MAIN_JID = `agent:${AGENT_ID}`;
@@ -83,6 +84,39 @@ async function writeMainIdentityFile(content: string): Promise<void> {
   await fs.writeFile(IDENTITY_FILE, content, "utf8");
 }
 
+async function readMainMemoryFile(): Promise<{ content: string; mtime: string | null }> {
+  try {
+    const [stat, content] = await Promise.all([
+      fs.stat(MEMORY_FILE),
+      fs.readFile(MEMORY_FILE, "utf8"),
+    ]);
+    return { content, mtime: stat.mtime.toISOString() };
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === "ENOENT") {
+      // Empty memory is normal initial state; not an error.
+      return { content: "", mtime: null };
+    }
+    throw err;
+  }
+}
+
+async function currentMemoryMtime(): Promise<string | null> {
+  try {
+    const stat = await fs.stat(MEMORY_FILE);
+    return stat.mtime.toISOString();
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === "ENOENT") return null;
+    throw err;
+  }
+}
+
+async function writeMainMemoryFile(content: string): Promise<string> {
+  await fs.mkdir(WORKSPACE_DIR, { recursive: true });
+  await fs.writeFile(MEMORY_FILE, content, "utf8");
+  const stat = await fs.stat(MEMORY_FILE);
+  return stat.mtime.toISOString();
+}
+
 export const handleAgents: OpenClawPluginHttpRouteHandler = async (req, res) => {
   const url = new URL(req.url ?? "/", "http://localhost");
   const segments = url.pathname.split("/").filter(Boolean);
@@ -152,6 +186,53 @@ export const handleAgents: OpenClawPluginHttpRouteHandler = async (req, res) => 
         }
         await writeMainIdentityFile(body.content);
         return sendJson(res, 200, { folder: MAIN_FOLDER, saved: true });
+      }
+      return sendJson(res, 405, { error: `method ${method} not allowed` });
+    }
+
+    // /api/dashboard/agents/:folder/memory — backed by workspace MEMORY.md for main.
+    if (sub === "memory") {
+      if (folder !== MAIN_FOLDER) {
+        return sendJson(res, 410, DEPRECATED_BODY);
+      }
+      if (method === "GET") {
+        const { content, mtime } = await readMainMemoryFile();
+        return sendJson(res, 200, { folder: MAIN_FOLDER, content, mtime });
+      }
+      if (method === "PUT") {
+        const chunks: Buffer[] = [];
+        for await (const chunk of req) chunks.push(chunk as Buffer);
+        const raw = Buffer.concat(chunks).toString("utf8");
+        let body: { content?: unknown; lastSeenMtime?: unknown } = {};
+        if (raw.trim()) {
+          try {
+            body = JSON.parse(raw) as { content?: unknown; lastSeenMtime?: unknown };
+          } catch {
+            return sendJson(res, 400, {
+              error: "body must be JSON with `content` string and optional `lastSeenMtime`",
+            });
+          }
+        }
+        if (typeof body.content !== "string") {
+          return sendJson(res, 400, { error: "content must be a string" });
+        }
+        const lastSeen =
+          typeof body.lastSeenMtime === "string"
+            ? body.lastSeenMtime
+            : body.lastSeenMtime === null
+              ? null
+              : undefined;
+
+        // Conflict detection: only when client supplied a non-null mtime baseline.
+        if (typeof lastSeen === "string") {
+          const current = await currentMemoryMtime();
+          if (current !== null && current !== lastSeen) {
+            return sendJson(res, 409, { error: "Memory was modified externally" });
+          }
+        }
+
+        const newMtime = await writeMainMemoryFile(body.content);
+        return sendJson(res, 200, { folder: MAIN_FOLDER, saved: true, mtime: newMtime });
       }
       return sendJson(res, 405, { error: `method ${method} not allowed` });
     }
