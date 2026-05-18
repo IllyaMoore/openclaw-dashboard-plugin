@@ -8,6 +8,7 @@ const AGENT_ID = "main";
 const WORKSPACE_DIR = join(homedir(), ".openclaw", "workspace");
 const IDENTITY_FILE = join(WORKSPACE_DIR, "IDENTITY.md");
 const MEMORY_FILE = join(WORKSPACE_DIR, "MEMORY.md");
+const LESSONS_FILE = join(WORKSPACE_DIR, "LESSONS.md");
 
 const MAIN_FOLDER = "main";
 const MAIN_JID = `agent:${AGENT_ID}`;
@@ -114,6 +115,38 @@ async function writeMainMemoryFile(content: string): Promise<string> {
   await fs.mkdir(WORKSPACE_DIR, { recursive: true });
   await fs.writeFile(MEMORY_FILE, content, "utf8");
   const stat = await fs.stat(MEMORY_FILE);
+  return stat.mtime.toISOString();
+}
+
+async function readMainLessonsFile(): Promise<{ content: string; mtime: string | null }> {
+  try {
+    const [stat, content] = await Promise.all([
+      fs.stat(LESSONS_FILE),
+      fs.readFile(LESSONS_FILE, "utf8"),
+    ]);
+    return { content, mtime: stat.mtime.toISOString() };
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === "ENOENT") {
+      return { content: "", mtime: null };
+    }
+    throw err;
+  }
+}
+
+async function currentLessonsMtime(): Promise<string | null> {
+  try {
+    const stat = await fs.stat(LESSONS_FILE);
+    return stat.mtime.toISOString();
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === "ENOENT") return null;
+    throw err;
+  }
+}
+
+async function writeMainLessonsFile(content: string): Promise<string> {
+  await fs.mkdir(WORKSPACE_DIR, { recursive: true });
+  await fs.writeFile(LESSONS_FILE, content, "utf8");
+  const stat = await fs.stat(LESSONS_FILE);
   return stat.mtime.toISOString();
 }
 
@@ -232,6 +265,50 @@ export const handleAgents: OpenClawPluginHttpRouteHandler = async (req, res) => 
         }
 
         const newMtime = await writeMainMemoryFile(body.content);
+        return sendJson(res, 200, { folder: MAIN_FOLDER, saved: true, mtime: newMtime });
+      }
+      return sendJson(res, 405, { error: `method ${method} not allowed` });
+    }
+
+    // /api/dashboard/agents/:folder/lessons — backed by workspace LESSONS.md for main.
+    if (sub === "lessons") {
+      if (folder !== MAIN_FOLDER) {
+        return sendJson(res, 410, DEPRECATED_BODY);
+      }
+      if (method === "GET") {
+        const { content, mtime } = await readMainLessonsFile();
+        return sendJson(res, 200, { folder: MAIN_FOLDER, content, mtime });
+      }
+      if (method === "PUT") {
+        const chunks: Buffer[] = [];
+        for await (const chunk of req) chunks.push(chunk as Buffer);
+        const raw = Buffer.concat(chunks).toString("utf8");
+        let body: { content?: unknown; lastSeenMtime?: unknown } = {};
+        if (raw.trim()) {
+          try {
+            body = JSON.parse(raw) as { content?: unknown; lastSeenMtime?: unknown };
+          } catch {
+            return sendJson(res, 400, {
+              error: "body must be JSON with `content` string and optional `lastSeenMtime`",
+            });
+          }
+        }
+        if (typeof body.content !== "string") {
+          return sendJson(res, 400, { error: "content must be a string" });
+        }
+        const lastSeen =
+          typeof body.lastSeenMtime === "string"
+            ? body.lastSeenMtime
+            : body.lastSeenMtime === null
+              ? null
+              : undefined;
+        if (typeof lastSeen === "string") {
+          const current = await currentLessonsMtime();
+          if (current !== null && current !== lastSeen) {
+            return sendJson(res, 409, { error: "Lessons was modified externally" });
+          }
+        }
+        const newMtime = await writeMainLessonsFile(body.content);
         return sendJson(res, 200, { folder: MAIN_FOLDER, saved: true, mtime: newMtime });
       }
       return sendJson(res, 405, { error: `method ${method} not allowed` });
