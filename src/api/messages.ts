@@ -7,6 +7,7 @@ import { promises as fs } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
+import { spawn } from "node:child_process";
 import type { IncomingMessage, ServerResponse } from "node:http";
 
 const AGENT_ID = "main";
@@ -371,25 +372,61 @@ export function createMessagesHandler(
         });
       }
 
-      // DELETE /api/dashboard/messages?folder=X — reset session
+      // DELETE /api/dashboard/messages?folder=X — reset the chat session.
+      // Maps the dashboard's per-folder Clear action to a real
+      // `openclaw gateway call sessions.reset` against the shared chat
+      // session (`agent:<AGENT_ID>:<CHAT_SESSION_KEY>`). The session JSONL is
+      // archived to `.jsonl.reset.<timestamp>` and the in-memory agent
+      // forgets context.
       if (method === "DELETE" && segments.length === 3) {
         const folder = url.searchParams.get("folder")?.trim() ?? "";
         if (!FOLDER_RE.test(folder)) {
           return sendJson(res, 400, { error: "invalid or missing folder" });
         }
 
-        const scope = scopeKey(folder);
+        const sessionKey = `agent:${AGENT_ID}:${CHAT_SESSION_KEY}`;
+        const result = await new Promise<{ ok: boolean; output: string }>(
+          (resolve) => {
+            const child = spawn("/usr/bin/openclaw", [
+              "gateway",
+              "call",
+              "sessions.reset",
+              "--params",
+              JSON.stringify({ key: sessionKey }),
+              "--json",
+            ]);
+            let stdout = "";
+            let stderr = "";
+            child.stdout.on("data", (c) => (stdout += String(c)));
+            child.stderr.on("data", (c) => (stderr += String(c)));
+            child.on("close", (code) => {
+              resolve({
+                ok: code === 0,
+                output: (stdout + stderr).slice(0, 2000),
+              });
+            });
+            child.on("error", (err) => {
+              resolve({ ok: false, output: String(err).slice(0, 2000) });
+            });
+          },
+        );
 
-        // TODO(OPC-154-fu): wire a real gateway sessions.reset call so the
-        // session JSONL is truncated and the in-memory agent state is reset.
-        // For now we accept the request and surface stubbed=true so callers
-        // know the underlying reset has not happened yet.
-        logger.info?.(`[dashboard] reset (stub): scope=${scope}`);
+        if (!result.ok) {
+          logger.warn?.(
+            `[dashboard] reset failed: sessionKey=${sessionKey} output=${result.output}`,
+          );
+          return sendJson(res, 500, {
+            error: "reset failed",
+            sessionKey,
+            output: result.output,
+          });
+        }
 
-        return sendJson(res, 202, {
-          accepted: true,
-          scope,
-          stubbed: true,
+        logger.info?.(`[dashboard] reset: sessionKey=${sessionKey}`);
+        return sendJson(res, 200, {
+          reset: true,
+          sessionKey,
+          output: result.output,
         });
       }
 
