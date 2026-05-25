@@ -87,6 +87,26 @@ async function resolveSessionIdForScope(scope: string): Promise<string | null> {
   }
 }
 
+// After a sessions.reset the gateway provisions a fresh session whose
+// sessionFile path is not derivable from sessionId (different UUIDs). Read
+// the authoritative `sessionFile` straight from sessions.json so the
+// transcript loader always opens the right file.
+async function resolveSessionFileForScope(scope: string): Promise<string | null> {
+  try {
+    const raw = await fs.readFile(SESSIONS_INDEX, "utf8");
+    const parsed = JSON.parse(raw) as unknown;
+    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+      const entry = (parsed as Record<string, { sessionFile?: unknown }>)[scope];
+      if (entry && typeof entry.sessionFile === "string") {
+        return entry.sessionFile;
+      }
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
 /**
  * Read a session JSONL file and project each event into a chat-style message.
  *
@@ -96,14 +116,17 @@ async function resolveSessionIdForScope(scope: string): Promise<string | null> {
  * `text` field.
  */
 async function readSessionTranscript(
-  sessionId: string,
+  sessionFile: string,
   scope: string,
   limit: number,
   offset: number,
 ): Promise<{ items: DashboardMessage[]; total: number }> {
   let raw: string;
   try {
-    raw = await fs.readFile(join(SESSIONS_DIR, `${sessionId}.jsonl`), "utf8");
+    // `sessionFile` is an absolute path read from sessions.json. After
+    // sessions.reset, the gateway may write the new jsonl under a different
+    // UUID than `sessionId`, so prefer the indexed path over a derived one.
+    raw = await fs.readFile(sessionFile, "utf8");
   } catch {
     return { items: [], total: 0 };
   }
@@ -184,7 +207,7 @@ async function readSessionTranscript(
           : new Date().toISOString();
 
     messages.push({
-      id: typeof event.id === "string" ? event.id : `${sessionId}-${messages.length}`,
+      id: typeof event.id === "string" ? event.id : `${sessionFile}-${messages.length}`,
       // Prefix with `dashboard-` so ChatBubble's source-label fallback skips
       // labelling these as "WhatsApp". The underlying main session is genuinely
       // shared across channels and we can't recover the originating channel
@@ -245,16 +268,15 @@ export function createMessagesHandler(
         // Try the per-folder dashboard session first. If empty, fall back to
         // the shared main session — that's where dashboard POSTs are routed
         // and where the agent writes replies.
-        let sessionId = await resolveSessionIdForScope(scope);
-        let projectedScope = scope;
-        if (!sessionId) {
-          sessionId = await resolveSessionIdForScope(
+        let sessionFile = await resolveSessionFileForScope(scope);
+        const projectedScope = scope; // keep the dashboard scope in the response shape
+        if (!sessionFile) {
+          sessionFile = await resolveSessionFileForScope(
             `agent:${AGENT_ID}:${CHAT_SESSION_KEY}`,
           );
-          projectedScope = scope; // keep the dashboard scope in the response shape
         }
 
-        if (!sessionId) {
+        if (!sessionFile) {
           return sendJson(res, 200, {
             messages: [],
             total: 0,
@@ -264,7 +286,7 @@ export function createMessagesHandler(
         }
 
         const { items, total } = await readSessionTranscript(
-          sessionId,
+          sessionFile,
           projectedScope,
           limit,
           offset,
