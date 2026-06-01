@@ -15,6 +15,7 @@ import {
 import { createUiHandler } from "./src/api/ui.js";
 import { handleCalendarEvents } from "./src/api/calendar.js";
 import { handleSkills } from "./src/api/skills.js";
+import { handleChannels } from "./src/api/channels.js";
 
 export default definePluginEntry({
   id: "dashboard",
@@ -48,6 +49,13 @@ export default definePluginEntry({
       match: "prefix",
       gatewayRuntimeScopeSurface: "trusted-operator",
       handler: handleSkills,
+    });
+    api.registerHttpRoute({
+      path: "/api/dashboard/channels",
+      auth: "gateway",
+      match: "prefix",
+      gatewayRuntimeScopeSurface: "trusted-operator",
+      handler: handleChannels,
     });
     api.registerHttpRoute({
       path: "/api/dashboard/messages",
