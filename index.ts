@@ -14,6 +14,7 @@ import {
 } from "./src/api/uploads.js";
 import { createUiHandler } from "./src/api/ui.js";
 import { handleCalendarEvents } from "./src/api/calendar.js";
+import { handleSkills } from "./src/api/skills.js";
 
 export default definePluginEntry({
   id: "dashboard",
@@ -40,6 +41,13 @@ export default definePluginEntry({
       match: "prefix",
       gatewayRuntimeScopeSurface: "trusted-operator",
       handler: handleSessions,
+    });
+    api.registerHttpRoute({
+      path: "/api/dashboard/skills",
+      auth: "gateway",
+      match: "prefix",
+      gatewayRuntimeScopeSurface: "trusted-operator",
+      handler: handleSkills,
     });
     api.registerHttpRoute({
       path: "/api/dashboard/messages",
