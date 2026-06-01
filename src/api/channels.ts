@@ -145,29 +145,117 @@ async function fetchChannelsStatus(): Promise<{
 }
 
 // Heuristics: detect WhatsApp QR appearance and linked transitions from the
-// child process stdout. Format varies between openclaw versions — we look
-// at three signal classes:
-//
-//   1. ASCII-art QR block:  consecutive lines with █ or ▀ characters
-//      forming a square. This is `qrcode-terminal` output.
-//   2. URL line:  `whatsapp://qr/...` or `https://web.whatsapp.com/...`
-//      that the client could render via a JS qr-encoding lib.
-//   3. Linked signal:  lines containing "linked", "paired", "connected",
-//      "success" near the bottom.
+// child process stdout. The QR is rendered by `qrcode` (small terminal mode):
+// each row is a long sequence of half-block characters (▀ ▄ █) plus a space,
+// wrapped in ANSI bg/fg color codes (\x1b[47m, \x1b[40m, \x1b[30m, \x1b[37m,
+// \x1b[0m). The escape codes inflate line length, so we must strip them
+// before measuring glyph density. The final qrData we return to the client
+// is a small HTML fragment with <span> spans for each color region — the
+// frontend renders it via dangerouslySetInnerHTML inside a <pre>.
+const ANSI_ESCAPE_RE = /\x1b\[[0-9;]*m/g;
+const QR_GLYPH_RE = /[▀▄█]/g;
+
+function stripAnsi(s: string): string {
+  return s.replace(ANSI_ESCAPE_RE, "");
+}
+
+// Convert qrcode-terminal ANSI escapes into HTML <span>s with inline color
+// styles. Only the small alphabet of codes we observe in qrcode output is
+// honoured; everything else passes through as text. Output is safe to drop
+// into dangerouslySetInnerHTML — we HTML-escape literal text and never emit
+// attributes we don't control.
+function ansiToHtml(input: string): string {
+  let out = "";
+  let i = 0;
+  let bg: string | null = null;
+  let fg: string | null = null;
+  let openSpan = false;
+
+  const closeSpan = () => {
+    if (openSpan) {
+      out += "</span>";
+      openSpan = false;
+    }
+  };
+
+  const openSpanIfNeeded = () => {
+    if (openSpan) return;
+    const styles: string[] = [];
+    if (bg) styles.push(`background:${bg}`);
+    if (fg) styles.push(`color:${fg}`);
+    if (styles.length > 0) {
+      out += `<span style="${styles.join(";")}">`;
+      openSpan = true;
+    }
+  };
+
+  while (i < input.length) {
+    if (input[i] === "\x1b" && input[i + 1] === "[") {
+      const m = /^\x1b\[([0-9;]*)m/.exec(input.slice(i));
+      if (m && m[0] != null && m[1] != null) {
+        const code = m[1];
+        i += m[0].length;
+        closeSpan();
+        switch (code) {
+          case "0":
+          case "":
+            bg = null;
+            fg = null;
+            break;
+          case "30":
+            fg = "#000";
+            break;
+          case "37":
+            fg = "#fff";
+            break;
+          case "40":
+            bg = "#000";
+            break;
+          case "47":
+            bg = "#fff";
+            break;
+          default:
+            break;
+        }
+        continue;
+      }
+    }
+    const ch = input[i] ?? "";
+    if (ch === "&" || ch === "<" || ch === ">") {
+      openSpanIfNeeded();
+      out +=
+        ch === "&" ? "&amp;" : ch === "<" ? "&lt;" : "&gt;";
+    } else if (ch === "\n") {
+      closeSpan();
+      out += "\n";
+    } else {
+      openSpanIfNeeded();
+      out += ch;
+    }
+    i += 1;
+  }
+  closeSpan();
+  return out;
+}
+
 function classifyStdout(stdout: string): {
   qrData: string | null;
   linked: boolean;
 } {
-  // ASCII QR block detection: lines that consist mostly of QR-grid glyphs.
-  const qrGlyphs = /[▀-▟█▀▄]/g;
+  // Walk lines; identify a contiguous QR block by counting half-block glyphs
+  // after stripping ANSI. The QR rows are tens-to-hundreds of glyphs wide.
   const lines = stdout.split("\n");
   let qrStart = -1;
   let qrEnd = -1;
   for (let i = 0; i < lines.length; i++) {
-    const line = lines[i] ?? "";
-    const glyphMatches = line.match(qrGlyphs);
-    const density = (glyphMatches?.length ?? 0) / Math.max(1, line.length);
-    if (density > 0.4 && line.trim().length >= 8) {
+    const raw = lines[i] ?? "";
+    const plain = stripAnsi(raw);
+    const glyphCount = (plain.match(QR_GLYPH_RE)?.length ?? 0);
+    // Density on the stripped line; QR rows are almost entirely block glyphs
+    // (possibly with leading/trailing whitespace), so density should be high.
+    const density = glyphCount / Math.max(1, plain.length);
+    const looksLikeQrRow = glyphCount >= 10 && density > 0.5;
+    if (looksLikeQrRow) {
       if (qrStart < 0) qrStart = i;
       qrEnd = i;
     } else if (qrStart >= 0 && qrEnd >= 0 && i - qrEnd > 2) {
@@ -176,15 +264,21 @@ function classifyStdout(stdout: string): {
   }
   let qrData: string | null = null;
   if (qrStart >= 0 && qrEnd > qrStart) {
-    qrData = lines.slice(qrStart, qrEnd + 1).join("\n");
+    const block = lines.slice(qrStart, qrEnd + 1).join("\n");
+    qrData = ansiToHtml(block);
   }
 
-  const lower = stdout.toLowerCase();
+  const lower = stripAnsi(stdout).toLowerCase();
+  // Be picky here. The CLI prints "open ... linked devices" in its
+  // pre-pair instructions, so a bare /\blinked\b/ would fire before the
+  // user has scanned anything. Match phrases the CLI only emits on
+  // success.
   const linked =
-    /\blinked\b/.test(lower) ||
-    /\bpaired\b/.test(lower) ||
-    /paired successfully/.test(lower) ||
-    /login successful/.test(lower);
+    /credentials saved for future sends/.test(lower) ||
+    /\blinked!/.test(lower) ||
+    /linked after restart/.test(lower) ||
+    /web session ready/.test(lower) ||
+    /paired successfully/.test(lower);
 
   return { qrData, linked };
 }
@@ -204,8 +298,9 @@ function projectSession(s: LoginSession): {
     channel: s.channel,
     status: s.status,
     qrData: s.qrData,
-    // Trim stdout to last 4 KB to keep response small.
-    stdoutTail: s.stdout.slice(-4096),
+    // Trim stdout to last 4 KB; strip ANSI so the diagnostic pane stays
+    // readable when something goes wrong before we recognise the QR.
+    stdoutTail: stripAnsi(s.stdout).slice(-4096),
     startedAt: s.startedAt,
     finishedAt: s.finishedAt,
     errorMessage: s.errorMessage,
