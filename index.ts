@@ -16,6 +16,8 @@ import { createUiHandler } from "./src/api/ui.js";
 import { handleCalendarEvents } from "./src/api/calendar.js";
 import { handleSkills } from "./src/api/skills.js";
 import { handleChannels } from "./src/api/channels.js";
+import { handleSecrets } from "./src/api/secrets.js";
+import { handleSecretsUi } from "./src/api/secrets-ui.js";
 
 export default definePluginEntry({
   id: "dashboard",
@@ -101,6 +103,23 @@ export default definePluginEntry({
       match: "exact",
       gatewayRuntimeScopeSurface: "trusted-operator",
       handler: handleModel,
+    });
+    api.registerHttpRoute({
+      path: "/api/dashboard/secrets",
+      auth: "gateway",
+      match: "prefix",
+      gatewayRuntimeScopeSurface: "trusted-operator",
+      handler: handleSecrets,
+    });
+    api.registerHttpRoute({
+      // The popup UI is plain HTML; the API calls it makes from the
+      // browser carry the gateway Bearer token (same pattern as the main
+      // /dashboard route). Marked auth: "plugin" so top-level navigation
+      // is not 401'd before the page can attach the token from #hash.
+      path: "/dashboard/secrets",
+      auth: "plugin",
+      match: "exact",
+      handler: handleSecretsUi,
     });
     api.registerHttpRoute({
       path: "/api/dashboard/calendar/events",
