@@ -1,6 +1,6 @@
 {
   "name": "@openclaw/dashboard",
-  "version": "0.1.1",
+  "version": "0.2.0",
   "description": "Command-Center dashboard repackaged as an OpenClaw plugin",
   "type": "module",
   "main": "./dist/index.js",
@@ -17,7 +17,8 @@
     "dev": "tsc --watch",
     "clean": "rimraf --glob dist \"openclaw-dashboard-*.tgz\"",
     "pack:tarball": "npm run clean && npm run build && npm pack",
-    "test": "echo \"no tests yet\" && exit 0"
+    "test": "vitest run",
+    "test:watch": "vitest"
   },
   "engines": {
     "node": ">=20"
@@ -34,7 +35,8 @@
     "@types/node": "^22.0.0",
     "openclaw": ">=2026.5.7",
     "rimraf": "^6.0.0",
-    "typescript": "^5.6.0"
+    "typescript": "^5.6.0",
+    "vitest": "^2.1.9"
   },
   "openclaw": {
     "extensions": [
