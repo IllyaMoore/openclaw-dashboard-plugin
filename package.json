@@ -1,6 +1,6 @@
 {
   "name": "@openclaw/dashboard",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Command-Center dashboard repackaged as an OpenClaw plugin",
   "type": "module",
   "main": "./dist/index.js",

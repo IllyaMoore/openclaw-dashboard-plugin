@@ -17,7 +17,6 @@ import { handleCalendarEvents } from "./src/api/calendar.js";
 import { handleSkills } from "./src/api/skills.js";
 import { handleChannels } from "./src/api/channels.js";
 import { handleSecrets } from "./src/api/secrets.js";
-import { handleSecretsUi } from "./src/api/secrets-ui.js";
 
 export default definePluginEntry({
   id: "dashboard",
@@ -111,16 +110,9 @@ export default definePluginEntry({
       gatewayRuntimeScopeSurface: "trusted-operator",
       handler: handleSecrets,
     });
-    api.registerHttpRoute({
-      // The popup UI is plain HTML; the API calls it makes from the
-      // browser carry the gateway Bearer token (same pattern as the main
-      // /dashboard route). Marked auth: "plugin" so top-level navigation
-      // is not 401'd before the page can attach the token from #hash.
-      path: "/dashboard/secrets",
-      auth: "plugin",
-      match: "exact",
-      handler: handleSecretsUi,
-    });
+    // The standalone /dashboard/secrets popup is retired — secrets management
+    // lives inside the main dashboard's System modal now (header lock icon /
+    // Cmd+. shortcut). The /api/dashboard/secrets routes above keep working.
     api.registerHttpRoute({
       path: "/api/dashboard/calendar/events",
       auth: "gateway",
